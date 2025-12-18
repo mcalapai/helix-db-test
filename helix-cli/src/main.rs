@@ -190,6 +190,12 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Rebuild node and edge secondary indices (local instances only)
+    RebuildIndices {
+        /// Instance name (defaults to selection prompt)
+        instance: Option<String>,
+    },
+
     /// Send feedback to the Helix team
     Feedback {
         /// Feedback message (opens interactive prompt if not provided)
@@ -251,6 +257,7 @@ async fn main() -> Result<()> {
             commands::migrate::run(path, queries_dir, instance_name, port, dry_run, no_backup).await
         }
         Commands::Backup { instance, output } => commands::backup::run(output, instance).await,
+        Commands::RebuildIndices { instance } => commands::rebuild_indices::run(instance).await,
         Commands::Feedback { message } => commands::feedback::run(message).await,
     };
 
