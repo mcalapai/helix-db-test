@@ -1,6 +1,7 @@
 use crate::{
     helix_engine::{
         bm25::bm25::{BM25, BM25Flatten},
+        indexing::secondary_index_not_found,
         storage_core::HelixGraphStorage,
         traversal_core::{traversal_iter::RwTraversalIterator, traversal_value::TraversalValue},
         types::GraphError,
@@ -106,9 +107,7 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
                     }
                 }
                 None => {
-                    result = Err(GraphError::New(format!(
-                        "Secondary Index {index} not found"
-                    )));
+                    result = Err(secondary_index_not_found(index));
                 }
             }
         }

@@ -1,4 +1,5 @@
 pub mod bm25;
+pub mod indexing;
 pub mod traversal_core;
 pub mod macros;
 pub mod reranker;

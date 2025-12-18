@@ -1,5 +1,6 @@
 use crate::{
     helix_engine::{
+        indexing::secondary_index_not_found,
         traversal_core::{traversal_iter::RoTraversalIterator, traversal_value::TraversalValue, LMDB_STRING_HEADER_LENGTH},
         types::GraphError,
     },
@@ -62,9 +63,7 @@ impl<
             .storage
             .secondary_indices
             .get(index)
-            .ok_or(GraphError::New(format!(
-                "Secondary Index {index} not found"
-            )))
+            .ok_or_else(|| secondary_index_not_found(index))
             .unwrap();
         let label_as_bytes = label.as_bytes();
         let res = db

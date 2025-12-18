@@ -12,6 +12,7 @@ mod storage_concurrent_tests;
 use crate::{
     helix_engine::{
         bm25::bm25::HBM25Config,
+        indexing::secondary_index_not_found,
         storage_core::{
             storage_methods::{DBMethods, StorageMethods},
             version_info::VersionInfo,
@@ -305,7 +306,7 @@ impl DBMethods for HelixGraphStorage {
         let db = self
             .secondary_indices
             .get(name)
-            .ok_or(GraphError::New(format!("Secondary Index {name} not found")))?;
+            .ok_or_else(|| secondary_index_not_found(name))?;
         db.clear(&mut wtxn)?;
         wtxn.commit()?;
         self.secondary_indices.remove(name);
