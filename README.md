@@ -82,6 +82,15 @@ Start by installing the Helix CLI tool to deploy Helix locally.
       age: U32
    }
 
+   E::WorksAt {
+      From: User,
+      To: Company,
+      Properties: {
+         INDEX since: String,
+         title: String
+      }
+   }
+
    QUERY getUser(user_name: String) =>
       user <- N<User>({name: user_name})
       RETURN user

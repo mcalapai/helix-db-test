@@ -216,6 +216,43 @@ impl HelixGraphStorage {
         Ok(storage)
     }
 
+    /// Rebuilds all node secondary indices from the current nodes DB.
+    /// This clears existing secondary index tables before repopulating them.
+    pub fn rebuild_secondary_indices(&self, txn: &mut RwTxn) -> Result<(), GraphError> {
+        if self.secondary_indices.is_empty() {
+            return Ok(());
+        }
+
+        for db in self.secondary_indices.values() {
+            db.clear(txn)?;
+        }
+
+        let arena = bumpalo::Bump::new();
+        let nodes = self
+            .nodes_db
+            .iter(txn)?
+            .map(|result| {
+                let (node_id, node_bytes) = result?;
+                Ok((node_id, node_bytes.to_vec()))
+            })
+            .collect::<Result<Vec<_>, GraphError>>()?;
+
+        for (node_id, node_bytes) in nodes {
+            let node = Node::from_bincode_bytes(node_id, &node_bytes, &arena)?;
+            for (index, db) in &self.secondary_indices {
+                let Some(value) = node.get_property(index) else {
+                    continue;
+                };
+                let serialized = bincode::serialize(value)?;
+                db.put(txn, &serialized, &node_id)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Rebuilds all edge secondary indices from the current edges DB.
+    /// This clears existing edge index tables before repopulating them.
     pub fn rebuild_edge_indices(&self, txn: &mut RwTxn) -> Result<(), GraphError> {
         if self.edge_secondary_indices.is_empty() {
             return Ok(());
@@ -246,6 +283,13 @@ impl HelixGraphStorage {
             }
         }
 
+        Ok(())
+    }
+
+    /// Rebuilds both node and edge secondary indices in a single write transaction.
+    pub fn rebuild_indices(&self, txn: &mut RwTxn) -> Result<(), GraphError> {
+        self.rebuild_secondary_indices(txn)?;
+        self.rebuild_edge_indices(txn)?;
         Ok(())
     }
 
