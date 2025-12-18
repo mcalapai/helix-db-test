@@ -26,6 +26,8 @@ pub enum SourceStep {
     NFromType(NFromType),
     /// Lookup an edge by ID
     EFromID(EFromID),
+    /// Lookup an edge by index
+    EFromIndex(EFromIndex),
     /// Lookup an edge by type
     EFromType(EFromType),
     /// Lookup a vector by ID
@@ -202,6 +204,26 @@ impl Display for EFromType {
 }
 
 #[derive(Clone, Debug)]
+pub struct EFromIndex {
+    /// Index to search against
+    pub index: GenRef<String>,
+    /// Key to search for in the index
+    pub key: GeneratedValue,
+    /// Label of edges to lookup - used for post filtering
+    pub label: GenRef<String>,
+}
+
+impl Display for EFromIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "e_from_index({}, {}, {})",
+            self.label, self.index, self.key
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct VFromID {
     /// ID of vector
     pub id: GenRef<String>,
@@ -263,6 +285,7 @@ impl Display for SourceStep {
             SourceStep::NFromIndex(n_from_index) => write!(f, "{n_from_index}"),
             SourceStep::NFromType(n_from_type) => write!(f, "{n_from_type}"),
             SourceStep::EFromID(e_from_id) => write!(f, "{e_from_id}"),
+            SourceStep::EFromIndex(e_from_index) => write!(f, "{e_from_index}"),
             SourceStep::EFromType(e_from_type) => write!(f, "{e_from_type}"),
             SourceStep::SearchVector(search_vector) => write!(f, "{search_vector}"),
             SourceStep::SearchBM25(search_bm25) => write!(f, "{search_bm25}"),

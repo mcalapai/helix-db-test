@@ -79,6 +79,15 @@ impl<'a> Ctx<'a> {
             })
             .dedup()
             .collect();
+        let edge_secondary_indices: Vec<String> = src
+            .get_latest_schema()?
+            .edge_schemas
+            .iter()
+            .flat_map(|schema| schema.properties.iter().flat_map(|props| props.iter()))
+            .filter(|f| f.is_indexed())
+            .map(|f| f.name.clone())
+            .dedup()
+            .collect();
 
         // Create the context first (without output populated)
         let mut ctx = Self {
@@ -118,6 +127,7 @@ impl<'a> Ctx<'a> {
         // Update the output with introspection data and secondary indices
         ctx.output.introspection_data = Some(introspection_data);
         ctx.output.secondary_indices = secondary_indices;
+        ctx.output.edge_secondary_indices = edge_secondary_indices;
 
         Ok(ctx)
     }

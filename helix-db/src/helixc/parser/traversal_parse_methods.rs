@@ -191,6 +191,77 @@ impl HelixParser {
                             }
                             ids = Some(new_ids);
                         }
+                        Rule::by_index => {
+                            ids = Some({
+                                let mut pairs: Pairs<'_, Rule> = p.clone().into_inner();
+                                let index = pairs.try_next_inner().try_next()?;
+                                let index = match index.as_rule() {
+                                    Rule::identifier => IdType::Identifier {
+                                        value: index.as_str().to_string(),
+                                        loc: index.loc(),
+                                    },
+                                    Rule::string_literal => IdType::Literal {
+                                        value: index.as_str().to_string(),
+                                        loc: index.loc(),
+                                    },
+                                    other => {
+                                        return Err(ParserError::from(format!(
+                                            "Should be identifier or string literal: {other:?}"
+                                        )));
+                                    }
+                                };
+                                let value = match pairs.try_next_inner()?.next() {
+                                    Some(val) => match val.as_rule() {
+                                        Rule::identifier => ValueType::Identifier {
+                                            value: val.as_str().to_string(),
+                                            loc: val.loc(),
+                                        },
+                                        Rule::string_literal => ValueType::Literal {
+                                            value: Value::from(val.as_str()),
+                                            loc: val.loc(),
+                                        },
+                                        Rule::integer => ValueType::Literal {
+                                            value: Value::from(
+                                                val.as_str().parse::<i64>().map_err(|_| {
+                                                    ParserError::from("Invalid integer value")
+                                                })?,
+                                            ),
+                                            loc: val.loc(),
+                                        },
+                                        Rule::float => ValueType::Literal {
+                                            value: Value::from(
+                                                val.as_str().parse::<f64>().map_err(|_| {
+                                                    ParserError::from("Invalid float value")
+                                                })?,
+                                            ),
+                                            loc: val.loc(),
+                                        },
+                                        Rule::boolean => ValueType::Literal {
+                                            value: Value::from(
+                                                val.as_str().parse::<bool>().map_err(|_| {
+                                                    ParserError::from("Invalid boolean value")
+                                                })?,
+                                            ),
+                                            loc: val.loc(),
+                                        },
+                                        _ => {
+                                            return Err(ParserError::from(
+                                                "Should be identifier or string literal",
+                                            ));
+                                        }
+                                    },
+                                    other => return Err(ParserError::from(format!(
+                                        "Unexpected rule in start_edge by_index: {:?}",
+                                        other
+                                    ))),
+                                };
+                                vec![IdType::ByIndex {
+                                    index: Box::new(index),
+                                    value: Box::new(value),
+                                    loc: p.loc(),
+                                }]
+                            })
+                        }
                         other => return Err(ParserError::from(format!(
                             "Unexpected rule in start_edge: {:?}",
                             other

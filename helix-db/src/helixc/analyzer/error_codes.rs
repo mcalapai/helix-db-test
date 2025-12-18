@@ -46,6 +46,8 @@ pub enum ErrorCode {
     E209,
     /// `E210` – `identifier was expected to be of type ID, but got {}`
     E210,
+    /// `E211` – `field has not been indexed for edge type`
+    E211,
     // QUERY ERRORS
     /// `E301` – `variable not in scope`
     E301,
@@ -154,6 +156,7 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::E208 => write!(f, "E208"),
             ErrorCode::E209 => write!(f, "E209"),
             ErrorCode::E210 => write!(f, "E210"),
+            ErrorCode::E211 => write!(f, "E211"),
             ErrorCode::E301 => write!(f, "E301"),
             ErrorCode::E302 => write!(f, "E302"),
             ErrorCode::E303 => write!(f, "E303"),
@@ -239,6 +242,7 @@ implement_error_code!(E207, "edge type `{}` exists but it is not a valid edge ty
 implement_error_code!(E208, "field `{}` has not been indexed for node type `{}`" => { field_name, node_type }, "use a field that has been indexed with `INDEX` in the schema for node type `{}`" => { node_type });
 implement_error_code!(E209, "unknown type `{}` for parameter `{}`" => { parameter_type, parameter_name }, "declare or use a matching schema object or use a primitive type" => {});
 implement_error_code!(E210, "identifier `{}` was expected to be of type ID, but got {}" => { identifier, value_type_name }, "ensure the identifier is of type ID" => {});
+implement_error_code!(E211, "field `{}` has not been indexed for edge type `{}`" => { field_name, edge_type }, "use a field that has been indexed with `INDEX` in the schema for edge type `{}`" => { edge_type });
 
 // Query errors
 implement_error_code!(E301, "variable `{}` not in scope" => { variable }, "check the variable" => {});
