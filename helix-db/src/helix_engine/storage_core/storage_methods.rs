@@ -6,8 +6,14 @@ pub trait DBMethods {
     /// Creates a new database with a given name for a secondary index
     fn create_secondary_index(&mut self, name: &str) -> Result<(), GraphError>;
 
-    /// Opens a database with a given name for a secondary index
+    /// Drops a database with a given name for a secondary index
     fn drop_secondary_index(&mut self, name: &str) -> Result<(), GraphError>;
+
+    /// Creates a new database with a given name for an edge secondary index
+    fn create_edge_secondary_index(&mut self, name: &str) -> Result<(), GraphError>;
+
+    /// Drops a database with a given name for an edge secondary index
+    fn drop_edge_secondary_index(&mut self, name: &str) -> Result<(), GraphError>;
 }
 
 pub trait StorageMethods {

@@ -12,7 +12,7 @@ mod storage_concurrent_tests;
 use crate::{
     helix_engine::{
         bm25::bm25::HBM25Config,
-        indexing::secondary_index_not_found,
+        indexing::{edge_secondary_index_db_name, edge_secondary_index_not_found, secondary_index_not_found},
         storage_core::{
             storage_methods::{DBMethods, StorageMethods},
             version_info::VersionInfo,
@@ -60,6 +60,7 @@ pub struct HelixGraphStorage {
     pub out_edges_db: Database<Bytes, Bytes>,
     pub in_edges_db: Database<Bytes, Bytes>,
     pub secondary_indices: HashMap<String, Database<Bytes, U128<BE>>>,
+    pub edge_secondary_indices: HashMap<String, Database<Bytes, U128<BE>>>,
     pub vectors: VectorCore,
     pub bm25: Option<HBM25Config>,
     pub metadata_db: Database<Bytes, Bytes>,
@@ -156,6 +157,21 @@ impl HelixGraphStorage {
                 );
             }
         }
+        let mut edge_secondary_indices = HashMap::new();
+        if let Some(indexes) = config.get_graph_config().edge_secondary_indices {
+            for index in indexes {
+                let db_name = edge_secondary_index_db_name(&index);
+                edge_secondary_indices.insert(
+                    index.clone(),
+                    graph_env
+                        .database_options()
+                        .types::<Bytes, U128<BE>>()
+                        .flags(DatabaseFlags::DUP_SORT)
+                        .name(&db_name)
+                        .create(&mut wtxn)?,
+                );
+            }
+        }
         let vector_config = config.get_vector_config();
         let vectors = VectorCore::new(
             &graph_env,
@@ -187,6 +203,7 @@ impl HelixGraphStorage {
             out_edges_db,
             in_edges_db,
             secondary_indices,
+            edge_secondary_indices,
             vectors,
             bm25,
             metadata_db,
@@ -197,6 +214,39 @@ impl HelixGraphStorage {
         storage_migration::migrate(&mut storage)?;
 
         Ok(storage)
+    }
+
+    pub fn rebuild_edge_indices(&self, txn: &mut RwTxn) -> Result<(), GraphError> {
+        if self.edge_secondary_indices.is_empty() {
+            return Ok(());
+        }
+
+        for db in self.edge_secondary_indices.values() {
+            db.clear(txn)?;
+        }
+
+        let arena = bumpalo::Bump::new();
+        let edges = self
+            .edges_db
+            .iter(txn)?
+            .map(|result| {
+                let (edge_id, edge_bytes) = result?;
+                Ok((edge_id, edge_bytes.to_vec()))
+            })
+            .collect::<Result<Vec<_>, GraphError>>()?;
+
+        for (edge_id, edge_bytes) in edges {
+            let edge = Edge::from_bincode_bytes(edge_id, &edge_bytes, &arena)?;
+            for (index, db) in &self.edge_secondary_indices {
+                let Some(value) = edge.get_property(index) else {
+                    continue;
+                };
+                let serialized = bincode::serialize(value)?;
+                db.put(txn, &serialized, &edge_id)?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Used because in the case the key changes in the future.
@@ -294,7 +344,13 @@ impl DBMethods for HelixGraphStorage {
     /// Creates a secondary index lmdb db (table) for a given index name
     fn create_secondary_index(&mut self, name: &str) -> Result<(), GraphError> {
         let mut wtxn = self.graph_env.write_txn()?;
-        let db = self.graph_env.create_database(&mut wtxn, Some(name))?;
+        let db = self
+            .graph_env
+            .database_options()
+            .types::<Bytes, U128<BE>>()
+            .flags(DatabaseFlags::DUP_SORT)
+            .name(name)
+            .create(&mut wtxn)?;
         wtxn.commit()?;
         self.secondary_indices.insert(name.to_string(), db);
         Ok(())
@@ -310,6 +366,35 @@ impl DBMethods for HelixGraphStorage {
         db.clear(&mut wtxn)?;
         wtxn.commit()?;
         self.secondary_indices.remove(name);
+        Ok(())
+    }
+
+    /// Creates an edge secondary index lmdb db (table) for a given index name
+    fn create_edge_secondary_index(&mut self, name: &str) -> Result<(), GraphError> {
+        let mut wtxn = self.graph_env.write_txn()?;
+        let db_name = edge_secondary_index_db_name(name);
+        let db = self
+            .graph_env
+            .database_options()
+            .types::<Bytes, U128<BE>>()
+            .flags(DatabaseFlags::DUP_SORT)
+            .name(&db_name)
+            .create(&mut wtxn)?;
+        wtxn.commit()?;
+        self.edge_secondary_indices.insert(name.to_string(), db);
+        Ok(())
+    }
+
+    /// Drops an edge secondary index lmdb db (table) for a given index name
+    fn drop_edge_secondary_index(&mut self, name: &str) -> Result<(), GraphError> {
+        let mut wtxn = self.graph_env.write_txn()?;
+        let db = self
+            .edge_secondary_indices
+            .get(name)
+            .ok_or_else(|| edge_secondary_index_not_found(name))?;
+        db.clear(&mut wtxn)?;
+        wtxn.commit()?;
+        self.edge_secondary_indices.remove(name);
         Ok(())
     }
 }
@@ -351,11 +436,6 @@ impl StorageMethods for HelixGraphStorage {
         // Get node to get its label
         //let node = self.get_node(txn, id)?;
         let mut edges = HashSet::new();
-        let mut out_edges = HashSet::new();
-        let mut in_edges = HashSet::new();
-
-        let mut other_out_edges = Vec::new();
-        let mut other_in_edges = Vec::new();
         // Delete outgoing edges
 
         let iter = self.out_edges_db.prefix_iter(txn, &id.to_be_bytes())?;
@@ -363,12 +443,8 @@ impl StorageMethods for HelixGraphStorage {
         for result in iter {
             let (key, value) = result?;
             assert_eq!(key.len(), 20);
-            let mut label = [0u8; 4];
-            label.copy_from_slice(&key[16..20]);
-            let (edge_id, to_node_id) = Self::unpack_adj_edge_data(value)?;
+            let (edge_id, _to_node_id) = Self::unpack_adj_edge_data(value)?;
             edges.insert(edge_id);
-            out_edges.insert(label);
-            other_in_edges.push((to_node_id, label, edge_id));
         }
 
         // Delete incoming edges
@@ -378,12 +454,8 @@ impl StorageMethods for HelixGraphStorage {
         for result in iter {
             let (key, value) = result?;
             assert_eq!(key.len(), 20);
-            let mut label = [0u8; 4];
-            label.copy_from_slice(&key[16..20]);
-            let (edge_id, from_node_id) = Self::unpack_adj_edge_data(value)?;
-            in_edges.insert(label);
+            let (edge_id, _from_node_id) = Self::unpack_adj_edge_data(value)?;
             edges.insert(edge_id);
-            other_out_edges.push((from_node_id, label, edge_id));
         }
 
         // println!("In edges: {}", in_edges.len());
@@ -391,30 +463,7 @@ impl StorageMethods for HelixGraphStorage {
         // println!("Deleting edges: {}", );
         // Delete all related data
         for edge in edges {
-            self.edges_db.delete(txn, Self::edge_key(&edge))?;
-        }
-        for label_bytes in out_edges.iter() {
-            self.out_edges_db
-                .delete(txn, &Self::out_edge_key(id, label_bytes))?;
-        }
-        for label_bytes in in_edges.iter() {
-            self.in_edges_db
-                .delete(txn, &Self::in_edge_key(id, label_bytes))?;
-        }
-
-        for (other_node_id, label_bytes, edge_id) in other_out_edges.iter() {
-            self.out_edges_db.delete_one_duplicate(
-                txn,
-                &Self::out_edge_key(other_node_id, label_bytes),
-                &Self::pack_edge_data(edge_id, id),
-            )?;
-        }
-        for (other_node_id, label_bytes, edge_id) in other_in_edges.iter() {
-            self.in_edges_db.delete_one_duplicate(
-                txn,
-                &Self::in_edge_key(other_node_id, label_bytes),
-                &Self::pack_edge_data(edge_id, id),
-            )?;
+            self.drop_edge(txn, &edge)?;
         }
 
         // delete secondary indices
@@ -454,6 +503,22 @@ impl StorageMethods for HelixGraphStorage {
         let label_hash = hash_label(edge.label, None);
         let out_edge_value = Self::pack_edge_data(edge_id, &edge.to_node);
         let in_edge_value = Self::pack_edge_data(edge_id, &edge.from_node);
+
+        for (index_name, db) in &self.edge_secondary_indices {
+            let Some(value) = edge.get_property(index_name) else {
+                continue;
+            };
+
+            match bincode::serialize(value) {
+                Ok(serialized) => {
+                    if let Err(e) = db.delete_one_duplicate(txn, &serialized, &edge.id) {
+                        return Err(GraphError::from(e));
+                    }
+                }
+                Err(e) => return Err(GraphError::from(e)),
+            }
+        }
+
         // Delete all edge-related data
         self.edges_db.delete(txn, Self::edge_key(edge_id))?;
         self.out_edges_db.delete_one_duplicate(
@@ -473,11 +538,6 @@ impl StorageMethods for HelixGraphStorage {
     fn drop_vector(&self, txn: &mut RwTxn, id: &u128) -> Result<(), GraphError> {
         let arena = bumpalo::Bump::new();
         let mut edges = HashSet::new();
-        let mut out_edges = HashSet::new();
-        let mut in_edges = HashSet::new();
-
-        let mut other_out_edges = Vec::new();
-        let mut other_in_edges = Vec::new();
         // Delete outgoing edges
 
         let iter = self.out_edges_db.prefix_iter(txn, &id.to_be_bytes())?;
@@ -485,12 +545,8 @@ impl StorageMethods for HelixGraphStorage {
         for result in iter {
             let (key, value) = result?;
             assert_eq!(key.len(), 20);
-            let mut label = [0u8; 4];
-            label.copy_from_slice(&key[16..20]);
-            let (edge_id, to_node_id) = Self::unpack_adj_edge_data(value)?;
+            let (edge_id, _to_node_id) = Self::unpack_adj_edge_data(value)?;
             edges.insert(edge_id);
-            out_edges.insert(label);
-            other_in_edges.push((to_node_id, label, edge_id));
         }
 
         // Delete incoming edges
@@ -500,12 +556,8 @@ impl StorageMethods for HelixGraphStorage {
         for result in iter {
             let (key, value) = result?;
             assert_eq!(key.len(), 20);
-            let mut label = [0u8; 4];
-            label.copy_from_slice(&key[16..20]);
-            let (edge_id, from_node_id) = Self::unpack_adj_edge_data(value)?;
-            in_edges.insert(label);
+            let (edge_id, _from_node_id) = Self::unpack_adj_edge_data(value)?;
             edges.insert(edge_id);
-            other_out_edges.push((from_node_id, label, edge_id));
         }
 
         // println!("In edges: {}", in_edges.len());
@@ -513,30 +565,7 @@ impl StorageMethods for HelixGraphStorage {
         // println!("Deleting edges: {}", );
         // Delete all related data
         for edge in edges {
-            self.edges_db.delete(txn, Self::edge_key(&edge))?;
-        }
-        for label_bytes in out_edges.iter() {
-            self.out_edges_db
-                .delete(txn, &Self::out_edge_key(id, label_bytes))?;
-        }
-        for label_bytes in in_edges.iter() {
-            self.in_edges_db
-                .delete(txn, &Self::in_edge_key(id, label_bytes))?;
-        }
-
-        for (other_node_id, label_bytes, edge_id) in other_out_edges.iter() {
-            self.out_edges_db.delete_one_duplicate(
-                txn,
-                &Self::out_edge_key(other_node_id, label_bytes),
-                &Self::pack_edge_data(edge_id, id),
-            )?;
-        }
-        for (other_node_id, label_bytes, edge_id) in other_in_edges.iter() {
-            self.in_edges_db.delete_one_duplicate(
-                txn,
-                &Self::in_edge_key(other_node_id, label_bytes),
-                &Self::pack_edge_data(edge_id, id),
-            )?;
+            self.drop_edge(txn, &edge)?;
         }
 
         // Delete vector data

@@ -33,17 +33,15 @@ impl<'arena, 'txn, 's> Iterator for EFromType<'arena, 'txn, 's> {
                 Ok(value) => {
                     assert!(
                         value.len() >= LMDB_STRING_HEADER_LENGTH,
-                        "value length does not contain header which means the `label` field was missing from the node on insertion"
+                        "value length does not contain header which means the `label` field was missing from the edge on insertion"
                     );
                     let length_of_label_in_lmdb =
                         u64::from_le_bytes(value[..LMDB_STRING_HEADER_LENGTH].try_into().unwrap())
                             as usize;
 
-                    println!("{:?}", value);
-
                     assert!(
                         value.len() >= length_of_label_in_lmdb + LMDB_STRING_HEADER_LENGTH,
-                        "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"
+                        "value length is not at least the header length plus the label length meaning there has been a corruption on edge insertion"
                     );
                     let label_in_lmdb = &value[LMDB_STRING_HEADER_LENGTH
                         ..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb];

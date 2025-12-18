@@ -89,6 +89,21 @@ impl<'db, 'arena, 'txn, 's, I: Iterator<Item = Result<TraversalValue<'arena>, Gr
             Err(e) => result = Err(GraphError::from(e)),
         }
 
+        for (index_name, db) in &self.storage.edge_secondary_indices {
+            let Some(value) = edge.get_property(index_name) else {
+                continue;
+            };
+
+            match bincode::serialize(value) {
+                Ok(serialized) => {
+                    if let Err(e) = db.put(self.txn, &serialized, &edge.id) {
+                        result = Err(GraphError::from(e));
+                    }
+                }
+                Err(e) => result = Err(GraphError::from(e)),
+            }
+        }
+
         let label_hash = hash_label(edge.label, None);
 
         match self.storage.out_edges_db.put_with_flags(

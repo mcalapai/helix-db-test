@@ -51,6 +51,7 @@ pub struct Source {
     pub migrations: Vec<GeneratedMigration>,
     pub introspection_data: Option<IntrospectionData>,
     pub secondary_indices: Vec<String>,
+    pub edge_secondary_indices: Vec<String>,
 }
 impl Default for Source {
     fn default() -> Self {
@@ -64,6 +65,7 @@ impl Default for Source {
             migrations: vec![],
             introspection_data: None,
             secondary_indices: vec![],
+            edge_secondary_indices: vec![],
         }
     }
 }
@@ -74,6 +76,7 @@ impl Display for Source {
             f,
             self.introspection_data.as_ref(),
             &self.secondary_indices,
+            &self.edge_secondary_indices,
         )?;
         write!(
             f,

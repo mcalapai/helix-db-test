@@ -22,6 +22,7 @@ impl Default for VectorConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct GraphConfig {
     pub secondary_indices: Option<Vec<String>>,
+    pub edge_secondary_indices: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -56,6 +57,7 @@ impl Config {
             }),
             graph_config: Some(GraphConfig {
                 secondary_indices: None,
+                edge_secondary_indices: None,
             }),
             db_max_size_gb: Some(db_max_size_gb),
             mcp: Some(mcp),
@@ -109,7 +111,8 @@ impl Config {
 		"ef_search": 768
 	},
 	"graph_config": {
-		"secondary_indices": []
+		"secondary_indices": [],
+		"edge_secondary_indices": []
 	},
 	"db_max_size_gb": 10,
 	"mcp": true,
@@ -150,13 +153,14 @@ impl Config {
         self.schema.clone()
     }
 
-    /// Format the config with the provided introspection data and secondary indices.
+    /// Format the config with the provided introspection data and secondary indices (node + edge).
     /// This method is used during code generation to embed schema metadata.
     pub fn fmt_with_schema(
         &self,
         f: &mut fmt::Formatter,
         introspection_data: Option<&IntrospectionData>,
         secondary_indices: &[String],
+        edge_secondary_indices: &[String],
     ) -> fmt::Result {
         writeln!(f, "pub fn config() -> Option<Config> {{")?;
         writeln!(f, "return Some(Config {{")?;
@@ -199,6 +203,22 @@ impl Config {
                 format!(
                     "Some(vec![{}])",
                     secondary_indices
+                        .iter()
+                        .map(|i| format!("\"{i}\".to_string()"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        )?;
+        writeln!(
+            f,
+            "edge_secondary_indices: {},",
+            if edge_secondary_indices.is_empty() {
+                "None".to_string()
+            } else {
+                format!(
+                    "Some(vec![{}])",
+                    edge_secondary_indices
                         .iter()
                         .map(|i| format!("\"{i}\".to_string()"))
                         .collect::<Vec<_>>()
@@ -253,6 +273,7 @@ impl Default for Config {
             }),
             graph_config: Some(GraphConfig {
                 secondary_indices: None,
+                edge_secondary_indices: None,
             }),
             db_max_size_gb: Some(10),
             mcp: Some(true),
@@ -269,6 +290,6 @@ impl fmt::Display for Config {
         // For backward compatibility, delegate to fmt_with_schema with empty values.
         // The actual introspection data and secondary indices should be provided
         // via fmt_with_schema when generating code from Source.
-        self.fmt_with_schema(f, None, &[])
+        self.fmt_with_schema(f, None, &[], &[])
     }
 }

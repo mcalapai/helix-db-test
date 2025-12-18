@@ -446,6 +446,7 @@ use helix_db::{
                     add_e::AddEAdapter,
                     add_n::AddNAdapter,
                     e_from_id::EFromIdAdapter,
+                    e_from_index::EFromIndexAdapter,
                     e_from_type::EFromTypeAdapter,
                     n_from_id::NFromIdAdapter,
                     n_from_index::NFromIndexAdapter,

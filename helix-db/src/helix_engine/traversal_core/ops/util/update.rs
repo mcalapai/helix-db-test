@@ -181,6 +181,28 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                     TraversalValue::Edge(mut edge) => {
                         match edge.properties {
                             None => {
+                                // Insert secondary indices
+                                for (k, v) in props.iter() {
+                                    let Some(db) = self.storage.edge_secondary_indices.get(*k)
+                                    else {
+                                        continue;
+                                    };
+
+                                    match bincode::serialize(v) {
+                                        Ok(v_serialized) => {
+                                            if let Err(e) = db.put_with_flags(
+                                                self.txn,
+                                                PutFlags::APPEND_DUP,
+                                                &v_serialized,
+                                                &edge.id,
+                                            ) {
+                                                results.push(Err(GraphError::from(e)));
+                                            }
+                                        }
+                                        Err(e) => results.push(Err(GraphError::from(e))),
+                                    }
+                                }
+
                                 // Create properties map and insert edge
                                 let map = ImmutablePropertiesMap::new(
                                     props.len(),
@@ -191,6 +213,44 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                 edge.properties = Some(map);
                             }
                             Some(old) => {
+                                for (k, v) in props.iter() {
+                                    let Some(db) = self.storage.edge_secondary_indices.get(*k)
+                                    else {
+                                        continue;
+                                    };
+
+                                    if let Some(old_value) = old.get(k) {
+                                        match bincode::serialize(old_value) {
+                                            Ok(old_serialized) => {
+                                                if let Err(e) = db.delete_one_duplicate(
+                                                    self.txn,
+                                                    &old_serialized,
+                                                    &edge.id,
+                                                ) {
+                                                    results.push(Err(GraphError::from(e)));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                results.push(Err(GraphError::from(e)));
+                                            }
+                                        }
+                                    }
+
+                                    match bincode::serialize(v) {
+                                        Ok(v_serialized) => {
+                                            if let Err(e) = db.put_with_flags(
+                                                self.txn,
+                                                PutFlags::APPEND_DUP,
+                                                &v_serialized,
+                                                &edge.id,
+                                            ) {
+                                                results.push(Err(GraphError::from(e)));
+                                            }
+                                        }
+                                        Err(e) => results.push(Err(GraphError::from(e))),
+                                    }
+                                }
+
                                 let diff = props.iter().filter(|(k, _)| {
                                     !old.iter().map(|(old_k, _)| old_k).contains(k)
                                 });
