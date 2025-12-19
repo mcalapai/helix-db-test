@@ -1,6 +1,7 @@
 pub mod count_tests;
 pub mod drop_tests;
 pub mod edge_traversal_tests;
+pub mod edge_secondary_index_tests;
 pub mod filter_tests;
 pub mod node_traversal_tests;
 pub mod range_tests;

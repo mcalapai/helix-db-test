@@ -384,3 +384,71 @@ impl HelixParser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::helixc::parser::{
+        types::{ExpressionType, StatementType},
+        write_to_temp_file, HelixParser,
+    };
+    use crate::protocol::value::Value;
+
+    #[test]
+    fn test_parse_start_edge_by_index() {
+        let source = r#"
+            N::Person { name: String }
+            N::Company { name: String }
+
+            E::WorksAt {
+                From: Person,
+                To: Company,
+                Properties: {
+                    INDEX since: String
+                }
+            }
+
+            QUERY by_since() =>
+                edge <- E<WorksAt>({since: "2020"})
+                RETURN edge
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+
+        let statement = parsed.queries[0]
+            .statements
+            .first()
+            .expect("missing statement");
+
+        let StatementType::Assignment(assignment) = &statement.statement else {
+            panic!("expected assignment");
+        };
+
+        let ExpressionType::Traversal(traversal) = &assignment.value.expr else {
+            panic!("expected traversal expression");
+        };
+
+        let StartNode::Edge { edge_type, ids } = &traversal.start else {
+            panic!("expected edge start node");
+        };
+
+        assert_eq!(edge_type, "WorksAt");
+        let ids = ids.as_ref().expect("missing ids");
+        assert_eq!(ids.len(), 1);
+
+        let IdType::ByIndex { index, value, .. } = &ids[0] else {
+            panic!("expected by_index id");
+        };
+
+        let IdType::Identifier { value: index_name, .. } = index.as_ref() else {
+            panic!("expected identifier index name");
+        };
+        assert_eq!(index_name, "since");
+
+        let ValueType::Literal { value, .. } = value.as_ref() else {
+            panic!("expected literal value");
+        };
+        assert_eq!(value, &Value::from("2020"));
+    }
+}

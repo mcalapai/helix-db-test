@@ -37,6 +37,12 @@
 - `test_delete_node_with_secondary_index` - Tests node deletion with secondary indices
 - `test_update_of_secondary_indices` - Tests updating secondary indices
 
+#### **Edge Secondary Index Tests** (`edge_secondary_index_tests.rs`)
+- `test_e_from_index_returns_edges` - Tests edge lookup via secondary index
+- `test_update_edge_secondary_indices` - Tests edge index updates on property changes
+- `test_drop_edge_removes_index_entries` - Tests edge index cleanup on edge deletion
+- `test_drop_node_cleans_incident_edge_indices` - Tests edge index cleanup on node deletion
+
 #### **Range Tests** (`range_tests.rs`)
 - `test_range_subset` - Tests range subset operations
 - `test_range_chaining` - Tests chaining range operations
@@ -157,4 +163,3 @@
 - ID tests:
     - `test_uuid_deserialization` - Tests UUID deserialization
     - `test_uuid_serialization` - Tests UUID serialization
-
