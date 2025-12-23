@@ -28,14 +28,81 @@ use helix_db::{
         },
     },
 };
-use std::{fmt::Write, fs};
+use std::{env, fmt::Write, fs, path::{Path, PathBuf}};
 
 // Development flag - set to true when working on V2 locally
 const DEV_MODE: bool = cfg!(debug_assertions);
-const HELIX_REPO_URL: &str = "https://github.com/helixdb/helix-db.git";
+const DEFAULT_HELIX_REPO_URL: &str = "https://github.com/helixdb/helix-db.git";
+const ENV_HELIX_REPO_URL: &str = "HELIX_REPO_URL";
+const ENV_HELIX_REPO_PATH: &str = "HELIX_REPO_PATH";
+const ENV_HELIX_REPO_REF: &str = "HELIX_REPO_REF";
 
 // Get the cargo workspace root at compile time
 const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+
+#[derive(Debug, Clone)]
+enum HelixRepoSource {
+    /// Copy a local Helix repo directory into the cache (no git required).
+    Copy { source_root: PathBuf },
+    /// Clone/pull a Helix repo from git.
+    Git {
+        url: String,
+        checkout_ref: Option<String>,
+    },
+}
+
+fn resolve_helix_repo_source() -> Result<HelixRepoSource> {
+    // Highest priority: explicit local path.
+    if let Ok(value) = env::var(ENV_HELIX_REPO_PATH) {
+        let path = value.trim();
+        if !path.is_empty() {
+            let source_root = PathBuf::from(path);
+            if !source_root.exists() {
+                return Err(eyre::eyre!(
+                    "{ENV_HELIX_REPO_PATH}={path} does not exist"
+                ));
+            }
+            return Ok(HelixRepoSource::Copy { source_root });
+        }
+    }
+
+    // Next: explicit git URL (lets dev builds force git mode too).
+    if let Ok(value) = env::var(ENV_HELIX_REPO_URL) {
+        let url = value.trim();
+        if !url.is_empty() {
+            return Ok(HelixRepoSource::Git {
+                url: url.to_string(),
+                checkout_ref: helix_repo_ref(),
+            });
+        }
+    }
+
+    // Default behavior.
+    if DEV_MODE {
+        return Ok(HelixRepoSource::Copy {
+            source_root: workspace_root()?,
+        });
+    }
+
+    Ok(HelixRepoSource::Git {
+        url: DEFAULT_HELIX_REPO_URL.to_string(),
+        checkout_ref: helix_repo_ref(),
+    })
+}
+
+fn helix_repo_ref() -> Option<String> {
+    env::var(ENV_HELIX_REPO_REF)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn workspace_root() -> Result<PathBuf> {
+    std::path::Path::new(CARGO_MANIFEST_DIR)
+        .parent() // helix-cli -> helix-db workspace root
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))
+}
 
 pub async fn run(
     instance_name: Option<String>,
@@ -149,37 +216,59 @@ pub async fn run(
 
 pub(crate) async fn ensure_helix_repo_cached() -> Result<()> {
     let repo_cache = get_helix_repo_cache()?;
+    let repo_source = resolve_helix_repo_source()?;
 
-    if needs_cache_recreation(&repo_cache)? {
-        recreate_helix_cache(&repo_cache).await?;
+    if needs_cache_recreation(&repo_cache, &repo_source)? {
+        recreate_helix_cache(&repo_cache, &repo_source).await?;
     } else if repo_cache.exists() {
-        update_helix_cache(&repo_cache).await?;
+        update_helix_cache(&repo_cache, &repo_source).await?;
     } else {
-        create_helix_cache(&repo_cache).await?;
+        create_helix_cache(&repo_cache, &repo_source).await?;
     }
 
     Ok(())
 }
 
-fn needs_cache_recreation(repo_cache: &std::path::Path) -> Result<bool> {
+fn needs_cache_recreation(repo_cache: &Path, repo_source: &HelixRepoSource) -> Result<bool> {
     if !repo_cache.exists() {
         return Ok(false);
     }
 
     let is_git_repo = repo_cache.join(".git").exists();
 
-    match (DEV_MODE, is_git_repo) {
-        (true, true) => {
+    match (repo_source, is_git_repo) {
+        (HelixRepoSource::Copy { .. }, true) => {
             print_status(
                 "CACHE",
-                "Cache is git repo but DEV_MODE requires copy - recreating...",
+                "Cache is git repo but copy mode requested - recreating...",
             );
             Ok(true)
         }
-        (false, false) => {
+        (HelixRepoSource::Git { url, .. }, true) => {
+            // If the repo is git but points at a different origin, recreate so subsequent pulls
+            // are against the expected repo.
+            let should_enforce_origin = env::var(ENV_HELIX_REPO_URL)
+                .ok()
+                .is_some_and(|v| !v.trim().is_empty());
+
+            if !should_enforce_origin {
+                return Ok(false);
+            }
+
+            let origin = git_origin_url(repo_cache).unwrap_or_default();
+            if origin.trim() != url.trim() {
+                print_status(
+                    "CACHE",
+                    "Cache origin differs from requested repo URL - recreating...",
+                );
+                return Ok(true);
+            }
+            Ok(false)
+        }
+        (HelixRepoSource::Git { .. }, false) => {
             print_status(
                 "CACHE",
-                "Cache is copy but production mode requires git repo - recreating...",
+                "Cache is copy but git mode requested - recreating...",
             );
             Ok(true)
         }
@@ -187,49 +276,65 @@ fn needs_cache_recreation(repo_cache: &std::path::Path) -> Result<bool> {
     }
 }
 
-async fn recreate_helix_cache(repo_cache: &std::path::Path) -> Result<()> {
-    std::fs::remove_dir_all(repo_cache)?;
-    create_helix_cache(repo_cache).await
+fn git_origin_url(repo_cache: &Path) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(repo_cache)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre::eyre!(
+            "Failed to read git origin URL from Helix repo cache:\n{}",
+            stderr
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-async fn create_helix_cache(repo_cache: &std::path::Path) -> Result<()> {
+async fn recreate_helix_cache(repo_cache: &Path, repo_source: &HelixRepoSource) -> Result<()> {
+    std::fs::remove_dir_all(repo_cache)?;
+    create_helix_cache(repo_cache, repo_source).await
+}
+
+async fn create_helix_cache(repo_cache: &Path, repo_source: &HelixRepoSource) -> Result<()> {
     print_status("CACHE", "Caching Helix repository (first time setup)...");
 
-    if DEV_MODE {
-        create_dev_cache(repo_cache)?;
-    } else {
-        create_git_cache(repo_cache)?;
+    match repo_source {
+        HelixRepoSource::Copy { source_root } => create_copy_cache(repo_cache, source_root)?,
+        HelixRepoSource::Git {
+            url,
+            checkout_ref,
+        } => create_git_cache(repo_cache, url, checkout_ref.as_deref())?,
     }
 
     print_success("Helix repository cached successfully");
     Ok(())
 }
 
-async fn update_helix_cache(repo_cache: &std::path::Path) -> Result<()> {
+async fn update_helix_cache(repo_cache: &Path, repo_source: &HelixRepoSource) -> Result<()> {
     print_status("UPDATE", "Updating Helix repository cache...");
 
-    if DEV_MODE {
-        update_dev_cache(repo_cache)?;
-    } else {
-        update_git_cache(repo_cache)?;
+    match repo_source {
+        HelixRepoSource::Copy { source_root } => update_copy_cache(repo_cache, source_root)?,
+        HelixRepoSource::Git { checkout_ref, .. } => {
+            update_git_cache(repo_cache, checkout_ref.as_deref())?;
+        }
     }
 
     print_success("Helix repository updated");
     Ok(())
 }
 
-fn create_dev_cache(repo_cache: &std::path::Path) -> Result<()> {
-    let workspace_root = std::path::Path::new(CARGO_MANIFEST_DIR)
-        .parent() // helix-cli -> helix-db
-        .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
-
-    print_status("DEV", "Development mode: copying local workspace...");
-    copy_dir_recursive_excluding(workspace_root, repo_cache)
+fn create_copy_cache(repo_cache: &Path, source_root: &Path) -> Result<()> {
+    print_status("CACHE", &format!("Copying Helix repo from {}", source_root.display()));
+    copy_dir_recursive_excluding(source_root, repo_cache)
 }
 
-fn create_git_cache(repo_cache: &std::path::Path) -> Result<()> {
+fn create_git_cache(repo_cache: &Path, repo_url: &str, checkout_ref: Option<&str>) -> Result<()> {
     let output = std::process::Command::new("git")
-        .args(["clone", HELIX_REPO_URL, &repo_cache.to_string_lossy()])
+        .args(["clone", repo_url, &repo_cache.to_string_lossy()])
         .output()?;
 
     if !output.status.success() {
@@ -240,22 +345,65 @@ fn create_git_cache(repo_cache: &std::path::Path) -> Result<()> {
         return Err(eyre::eyre!("{}", error.render()));
     }
 
+    if let Some(checkout_ref) = checkout_ref {
+        let output = std::process::Command::new("git")
+            .args(["checkout", checkout_ref])
+            .current_dir(repo_cache)
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre::eyre!(
+                "Failed to checkout Helix repo ref '{checkout_ref}':\n{}",
+                stderr
+            ));
+        }
+    }
+
     Ok(())
 }
 
-fn update_dev_cache(repo_cache: &std::path::Path) -> Result<()> {
-    let workspace_root = std::path::Path::new(CARGO_MANIFEST_DIR)
-        .parent()
-        .ok_or_else(|| eyre::eyre!("Cannot determine workspace root"))?;
-
+fn update_copy_cache(repo_cache: &Path, source_root: &Path) -> Result<()> {
     // Remove old cache and copy fresh
     if repo_cache.exists() {
         std::fs::remove_dir_all(repo_cache)?;
     }
-    copy_dir_recursive_excluding(workspace_root, repo_cache)
+    copy_dir_recursive_excluding(source_root, repo_cache)
 }
 
-fn update_git_cache(repo_cache: &std::path::Path) -> Result<()> {
+fn update_git_cache(repo_cache: &Path, checkout_ref: Option<&str>) -> Result<()> {
+    // If a ref is configured, treat it as a pinned checkout (fetch + checkout).
+    // This avoids `git pull` errors on detached HEAD states (tags/commits).
+    if let Some(checkout_ref) = checkout_ref {
+        let output = std::process::Command::new("git")
+            .args(["fetch", "--all", "--tags"])
+            .current_dir(repo_cache)
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre::eyre!(
+                "Failed to fetch Helix repository updates:\n{}",
+                stderr
+            ));
+        }
+
+        let output = std::process::Command::new("git")
+            .args(["checkout", checkout_ref])
+            .current_dir(repo_cache)
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(eyre::eyre!(
+                "Failed to checkout Helix repo ref '{checkout_ref}':\n{}",
+                stderr
+            ));
+        }
+
+        return Ok(());
+    }
+
     let output = std::process::Command::new("git")
         .args(["pull"])
         .current_dir(repo_cache)
@@ -479,6 +627,15 @@ fn handle_docker_rust_compilation_failure(
     print_error("Rust compilation failed during Docker build");
     println!();
     println!("This may indicate a bug in the Helix code generator.");
+    println!();
+    println!(
+        "If you are developing against a fork or unpublished changes, ensure the Helix repo cache matches your CLI/codegen:"
+    );
+    println!(
+        "  - set {ENV_HELIX_REPO_PATH}=/path/to/helix-db (copy mode), or"
+    );
+    println!("  - set {ENV_HELIX_REPO_URL}=<git url> (git mode), or");
+    println!("  - delete the cache at ~/.helix/repo and rebuild.");
     println!();
 
     // Offer to create GitHub issue

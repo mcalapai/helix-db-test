@@ -1,0 +1,7 @@
+[project]
+name = "tmp-helix-project"
+queries = "./db/"
+
+[local.dev]
+port = 6969
+build_mode = "dev"

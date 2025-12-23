@@ -155,13 +155,25 @@ impl Display for Traversal {
                     "G::new_mut_from_iter(&db, &mut txn, update_tr.iter().cloned(), &arena)",
                 )?;
                 write!(f, "\n    .update({})", write_properties_slice(properties))?;
-                write!(f, "\n    .collect_to_obj()?")?;
+                match self.should_collect {
+                    ShouldCollect::ToVec => write!(f, "\n    .collect::<Result<Vec<_>, _>>()?")?,
+                    ShouldCollect::ToObj => write!(f, "\n    .collect_to_obj()?")?,
+                    // Backwards-compatible default: preserve old single-item behavior.
+                    _ => write!(f, "\n    .collect_to_obj()?")?,
+                };
                 write!(f, "}}")?;
             }
         }
 
-        // Just collect the results - no mapping injected here
-        write!(f, "{}", self.should_collect)
+        // Just collect the results - no mapping injected here.
+        //
+        // NOTE: TraversalType::Update collects inside the block so the returned value
+        // does not borrow the temporary `update_tr` vec; don't append `should_collect`.
+        if matches!(&self.traversal_type, TraversalType::Update(_)) {
+            Ok(())
+        } else {
+            write!(f, "{}", self.should_collect)
+        }
     }
 }
 impl Default for Traversal {

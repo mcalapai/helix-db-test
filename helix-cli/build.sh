@@ -20,11 +20,11 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 # if dev profile, build with dev profile
 if [ "$1" = "dev" ]; then
-    cargo build --profile dev && cargo install --profile dev --path . --root ~/.local
+    cargo build --profile dev && cargo install --profile dev --path . --root ~/.local --force
 elif [ "$1" = "offline" ]; then
-    cargo build --profile dev --offline && cargo install --profile dev --offline --path . --root ~/.local
+    cargo build --profile dev --offline && cargo install --profile dev --offline --path . --root ~/.local --force
 else
-    cargo build --release && cargo install --path . --root ~/.local
+    cargo build --release && cargo install --path . --root ~/.local --force
 fi
 
 if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then

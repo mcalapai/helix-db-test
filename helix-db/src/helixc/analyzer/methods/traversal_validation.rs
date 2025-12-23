@@ -1723,8 +1723,16 @@ pub(crate) fn validate_traversal<'a>(
                         })
                         .collect(),
                 ));
-                cur_ty = cur_ty.into_single();
-                gen_traversal.should_collect = ShouldCollect::No;
+                // Preserve cardinality: updating a traversal of Nodes/Edges should return a
+                // collection (possibly empty) instead of erroring on "No value found".
+                //
+                // This enables missing-safe patterns like:
+                //   N<Type>::WHERE(...)::UPDATE({ ... })
+                // which should yield zero updated rows when the selection is empty.
+                gen_traversal.should_collect = match cur_ty.base() {
+                    Type::Nodes(_) | Type::Edges(_) => ShouldCollect::ToVec,
+                    _ => ShouldCollect::ToObj,
+                };
                 excluded.clear();
             }
 
@@ -2354,8 +2362,71 @@ mod tests {
         assert!(diagnostics.is_empty());
     }
 
-    // Note: Removed tests for UPDATE, Range, and property errors as they require
-    // different syntax or validation approaches than initially assumed
+    // ============================================================================
+    // Update Tests
+    // ============================================================================
+
+    #[test]
+    fn test_where_update_is_missing_safe_for_plural_traversals() {
+        let source = r#"
+            N::Person { INDEX stable_id: String, name: String }
+
+            QUERY UpdatePeopleMissingSafe(stable_id: String, name: String) =>
+                updated <- N<Person>
+                    ::WHERE(_::{stable_id}::EQ(stable_id))
+                    ::UPDATE({ name: name })
+                RETURN updated
+
+            QUERY UpdatePersonStrict(id: ID, name: String) =>
+                updated <- N<Person>(id)::UPDATE({ name: name })
+                RETURN updated
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, generated) = result.unwrap();
+        assert!(
+            diagnostics.is_empty(),
+            "Expected no diagnostics, got: {diagnostics:?}"
+        );
+
+        let missing_safe = generated
+            .queries
+            .iter()
+            .find(|q| q.name == "UpdatePeopleMissingSafe")
+            .expect("generated UpdatePeopleMissingSafe query");
+        let missing_safe_src = format!("{missing_safe}");
+        let missing_safe_update = missing_safe_src
+            .split(".update(")
+            .nth(1)
+            .expect("expected generated update call");
+        assert!(
+            missing_safe_update.contains(".collect::<Result<Vec<_>, _>>()?"),
+            "expected plural UPDATE to collect into a Vec; got:\n{missing_safe_src}"
+        );
+        assert!(
+            !missing_safe_update.contains(".collect_to_obj()?"),
+            "plural UPDATE should not require a value; got:\n{missing_safe_src}"
+        );
+
+        let strict = generated
+            .queries
+            .iter()
+            .find(|q| q.name == "UpdatePersonStrict")
+            .expect("generated UpdatePersonStrict query");
+        let strict_src = format!("{strict}");
+        let strict_update = strict_src
+            .split(".update(")
+            .nth(1)
+            .expect("expected generated update call");
+        assert!(
+            strict_update.contains(".collect_to_obj()?"),
+            "expected single-item UPDATE to collect to an object; got:\n{strict_src}"
+        );
+    }
 
     // ============================================================================
     // Chained Traversal Tests
