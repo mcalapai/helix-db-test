@@ -33,6 +33,27 @@ pub trait NFromIndexAdapter<'db, 'arena, 'txn, 's, K: Into<Value> + Serialize>:
     >
     where
         K: Into<Value> + Serialize + Clone;
+
+    /// Returns a new iterator that will return all nodes matching any of the
+    /// provided keys from the secondary index.
+    ///
+    /// This is the index-backed equivalent of:
+    /// `N<Type>::WHERE(_::{field}::IS_IN(keys))`.
+    ///
+    /// Duplicates in `keys` are tolerated; results are de-duplicated by node ID.
+    fn n_from_index_in(
+        self,
+        label: &'s str,
+        index: &'s str,
+        keys: &'s [K],
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >
+    where
+        K: Into<Value> + Serialize + Clone;
 }
 
 impl<
@@ -115,6 +136,93 @@ impl<
             arena: self.arena,
             txn: self.txn,
             inner: res,
+        }
+    }
+
+    #[inline]
+    fn n_from_index_in(
+        self,
+        label: &'s str,
+        index: &'s str,
+        keys: &'s [K],
+    ) -> RoTraversalIterator<
+        'db,
+        'arena,
+        'txn,
+        impl Iterator<Item = Result<TraversalValue<'arena>, GraphError>>,
+    >
+    where
+        K: Into<Value> + Serialize + Clone,
+    {
+        let db = self
+            .storage
+            .secondary_indices
+            .get(index)
+            .ok_or_else(|| secondary_index_not_found(index))
+            .unwrap();
+
+        let label_as_bytes = label.as_bytes();
+        let label_len = label.len();
+
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<Result<TraversalValue<'arena>, GraphError>> = Vec::new();
+
+        for key in keys {
+            let prefix = bincode::serialize(&Value::from(key)).unwrap();
+            let iter = db.prefix_iter(self.txn, &prefix).unwrap();
+
+            for item in iter {
+                let (.., node_id) = match item {
+                    Ok(pair) => pair,
+                    Err(_) => continue,
+                };
+
+                if !seen.insert(node_id) {
+                    continue;
+                }
+
+                let value = match self.storage.nodes_db.get(self.txn, &node_id) {
+                    Ok(Some(value)) => value,
+                    _ => continue,
+                };
+
+                assert!(
+                    value.len() >= LMDB_STRING_HEADER_LENGTH,
+                    "value length does not contain header which means the `label` field was missing from the node on insertion"
+                );
+
+                let length_of_label_in_lmdb =
+                    u64::from_le_bytes(value[..LMDB_STRING_HEADER_LENGTH].try_into().unwrap())
+                        as usize;
+
+                if length_of_label_in_lmdb != label_len {
+                    continue;
+                }
+
+                assert!(
+                    value.len() >= length_of_label_in_lmdb + LMDB_STRING_HEADER_LENGTH,
+                    "value length is not at least the header length plus the label length meaning there has been a corruption on node insertion"
+                );
+
+                let label_in_lmdb = &value
+                    [LMDB_STRING_HEADER_LENGTH..LMDB_STRING_HEADER_LENGTH + length_of_label_in_lmdb];
+
+                if label_in_lmdb != label_as_bytes {
+                    continue;
+                }
+
+                match Node::<'arena>::from_bincode_bytes(node_id, value, self.arena) {
+                    Ok(node) => out.push(Ok(TraversalValue::Node(node))),
+                    Err(e) => out.push(Err(GraphError::ConversionError(e.to_string()))),
+                }
+            }
+        }
+
+        RoTraversalIterator {
+            storage: self.storage,
+            arena: self.arena,
+            txn: self.txn,
+            inner: out.into_iter(),
         }
     }
 }

@@ -22,6 +22,8 @@ pub enum SourceStep {
     NFromID(NFromID),
     /// Lookup a node by index
     NFromIndex(NFromIndex),
+    /// Lookup nodes by index for multiple keys
+    NFromIndexIn(NFromIndexIn),
     /// Lookup a node by type
     NFromType(NFromType),
     /// Lookup an edge by ID
@@ -283,6 +285,7 @@ impl Display for SourceStep {
             SourceStep::AddV(add_v) => write!(f, "{add_v}"),
             SourceStep::NFromID(n_from_id) => write!(f, "{n_from_id}"),
             SourceStep::NFromIndex(n_from_index) => write!(f, "{n_from_index}"),
+            SourceStep::NFromIndexIn(n_from_index_in) => write!(f, "{n_from_index_in}"),
             SourceStep::NFromType(n_from_type) => write!(f, "{n_from_type}"),
             SourceStep::EFromID(e_from_id) => write!(f, "{e_from_id}"),
             SourceStep::EFromIndex(e_from_index) => write!(f, "{e_from_index}"),
@@ -349,6 +352,26 @@ impl Display for NFromIndex {
             f,
             "n_from_index({}, {}, {})",
             self.label, self.index, self.key
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct NFromIndexIn {
+    /// Index to search against
+    pub index: GenRef<String>,
+    /// Keys to search for in the index
+    pub keys: GeneratedValue,
+    /// Label of nodes to lookup - used for post filtering
+    pub label: GenRef<String>,
+}
+
+impl Display for NFromIndexIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "n_from_index_in({}, {}, {})",
+            self.label, self.index, self.keys
         )
     }
 }

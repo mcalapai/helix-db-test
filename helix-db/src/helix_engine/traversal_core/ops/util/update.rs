@@ -1,4 +1,3 @@
-use heed3::PutFlags;
 use itertools::Itertools;
 
 use crate::{
@@ -67,12 +66,8 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                                     match bincode::serialize(v) {
                                         Ok(v_serialized) => {
-                                            if let Err(e) = db.put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &node.id,
-                                            ) {
+                                            if let Err(e) = db.put(self.txn, &v_serialized, &node.id)
+                                            {
                                                 results.push(Err(GraphError::from(e)));
                                             }
                                         }
@@ -120,12 +115,8 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
                                     // create new secondary indexes for the props changed
                                     match bincode::serialize(v) {
                                         Ok(v_serialized) => {
-                                            if let Err(e) = db.put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &node.id,
-                                            ) {
+                                            if let Err(e) = db.put(self.txn, &v_serialized, &node.id)
+                                            {
                                                 results.push(Err(GraphError::from(e)));
                                             }
                                         }
@@ -190,12 +181,8 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                                     match bincode::serialize(v) {
                                         Ok(v_serialized) => {
-                                            if let Err(e) = db.put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &edge.id,
-                                            ) {
+                                            if let Err(e) = db.put(self.txn, &v_serialized, &edge.id)
+                                            {
                                                 results.push(Err(GraphError::from(e)));
                                             }
                                         }
@@ -238,12 +225,8 @@ impl<'db, 'arena, 'txn, I: Iterator<Item = Result<TraversalValue<'arena>, GraphE
 
                                     match bincode::serialize(v) {
                                         Ok(v_serialized) => {
-                                            if let Err(e) = db.put_with_flags(
-                                                self.txn,
-                                                PutFlags::APPEND_DUP,
-                                                &v_serialized,
-                                                &edge.id,
-                                            ) {
+                                            if let Err(e) = db.put(self.txn, &v_serialized, &edge.id)
+                                            {
                                                 results.push(Err(GraphError::from(e)));
                                             }
                                         }

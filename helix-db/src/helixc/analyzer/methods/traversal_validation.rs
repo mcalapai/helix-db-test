@@ -26,7 +26,8 @@ use crate::{
             bool_ops::{BoExp, BoolOp, Eq, Gt, Gte, Lt, Lte, Neq},
             queries::Query as GeneratedQuery,
             source_steps::{
-                EFromID, EFromIndex, EFromType, NFromID, NFromIndex, NFromType, SourceStep,
+                EFromID, EFromIndex, EFromType, NFromID, NFromIndex, NFromIndexIn, NFromType,
+                SourceStep,
             },
             statements::Statement as GeneratedStatement,
             traversal_steps::{
@@ -41,6 +42,142 @@ use crate::{
 };
 use paste::paste;
 use std::collections::HashMap;
+
+#[derive(Clone, Debug)]
+enum IndexedWhereOp {
+    Eq(GeneratedValue),
+    IsIn(GeneratedValue),
+}
+
+#[derive(Clone, Debug)]
+struct IndexedWherePredicate {
+    property: GenRef<String>,
+    op: IndexedWhereOp,
+}
+
+fn extract_indexed_where_predicate(expr: &BoExp) -> Option<IndexedWherePredicate> {
+    let BoExp::Expr(traversal) = expr else {
+        return None;
+    };
+
+    // WHERE predicates are evaluated against the current element (DEFAULT_VAR_NAME),
+    // modeled as a nested traversal from that value.
+    let is_val_traversal = match &traversal.traversal_type {
+        TraversalType::FromIter(var) | TraversalType::FromSingle(var) => {
+            matches!(var, GenRef::Std(s) | GenRef::Literal(s) if s == DEFAULT_VAR_NAME)
+        }
+        _ => false,
+    };
+    if !is_val_traversal {
+        return None;
+    }
+
+    // Only optimize simple `_::{property}::<op>(...)` predicates (no nested traversals).
+    match traversal.source_step.inner() {
+        SourceStep::Identifier(_) | SourceStep::Anonymous => {}
+        _ => return None,
+    }
+
+    let mut property: Option<GenRef<String>> = None;
+    let mut bool_op: Option<BoolOp> = None;
+    let mut other_steps = 0usize;
+
+    for step in traversal.steps.iter() {
+        match step.inner() {
+            GeneratedStep::PropertyFetch(p) => {
+                if property.is_none() {
+                    property = Some(p.clone());
+                }
+            }
+            GeneratedStep::BoolOp(op) => {
+                if bool_op.is_none() {
+                    bool_op = Some(op.clone());
+                }
+            }
+            _ => other_steps += 1,
+        }
+    }
+
+    if other_steps != 0 {
+        return None;
+    }
+
+    let property = property?;
+    let bool_op = bool_op?;
+
+    match bool_op {
+        BoolOp::Eq(eq) => Some(IndexedWherePredicate {
+            property,
+            op: IndexedWhereOp::Eq(eq.right),
+        }),
+        BoolOp::IsIn(is_in) => Some(IndexedWherePredicate {
+            property,
+            op: IndexedWhereOp::IsIn(is_in.value),
+        }),
+        _ => None,
+    }
+}
+
+fn is_indexed_field(ctx: &Ctx<'_>, item_type: &Type, field_name: &str) -> bool {
+    let Some(fields) = ctx.get_item_fields(item_type) else {
+        return false;
+    };
+    fields
+        .get(field_name)
+        .is_some_and(|field| field.is_indexed())
+}
+
+fn ref_expr_for_index_key(expr: &GeneratedValue) -> GeneratedValue {
+    let rendered = expr.to_string();
+    if let Some(base) = rendered.strip_suffix(".clone()") {
+        GeneratedValue::Primitive(GenRef::Std(format!("&({base})")))
+    } else {
+        GeneratedValue::Primitive(GenRef::Std(format!("&({rendered})")))
+    }
+}
+
+fn maybe_fold_indexed_where_into_source(
+    ctx: &Ctx<'_>,
+    item_type: &Type,
+    gen_traversal: &mut GeneratedTraversal,
+    predicate: IndexedWherePredicate,
+) -> bool {
+    // Only fold the first WHERE directly after an N<...>/E<...> start step.
+    if !gen_traversal.steps.is_empty() {
+        return false;
+    }
+
+    if !is_indexed_field(ctx, item_type, predicate.property.inner()) {
+        return false;
+    }
+
+    match gen_traversal.source_step.inner() {
+        SourceStep::NFromType(n_from_type) => {
+            let label = n_from_type.label.clone();
+            let index = GenRef::Literal(predicate.property.inner().to_string());
+            match predicate.op {
+                IndexedWhereOp::Eq(key) => {
+                    gen_traversal.source_step = Separator::Period(SourceStep::NFromIndex(NFromIndex {
+                        label,
+                        index,
+                        key: ref_expr_for_index_key(&key),
+                    }));
+                    true
+                }
+                IndexedWhereOp::IsIn(keys) => {
+                    gen_traversal.source_step =
+                        Separator::Period(SourceStep::NFromIndexIn(NFromIndexIn {
+                            label,
+                            index,
+                            keys,
+                        }));
+                    true
+                }
+            }
+        }
+        _ => false,
+    }
+}
 
 /// Check if a property name is a reserved property and return its expected type
 fn get_reserved_property_type(prop_name: &str, item_type: &Type) -> Option<FieldType> {
@@ -917,13 +1054,29 @@ pub(crate) fn validate_traversal<'a>(
                 let stmt = stmt.unwrap();
                 match stmt {
                     GeneratedStatement::Traversal(tr) => {
-                        gen_traversal
-                            .steps
-                            .push(Separator::Period(GeneratedStep::Where(Where::Ref(
-                                WhereRef {
-                                    expr: BoExp::Expr(tr),
-                                },
-                            ))));
+                        let where_expr = Where::Ref(WhereRef {
+                            expr: BoExp::Expr(tr),
+                        });
+                        let boexp = match &where_expr {
+                            Where::Ref(wr) => &wr.expr,
+                        };
+                        let folded = extract_indexed_where_predicate(boexp)
+                            .map(|predicate| {
+                                maybe_fold_indexed_where_into_source(
+                                    ctx,
+                                    &cur_ty,
+                                    gen_traversal,
+                                    predicate,
+                                )
+                            })
+                            .unwrap_or(false);
+                        if folded {
+                            // folded into the source step; no WHERE step emitted.
+                        } else {
+                            gen_traversal
+                                .steps
+                                .push(Separator::Period(GeneratedStep::Where(where_expr)));
+                        }
                     }
                     GeneratedStatement::BoExp(expr) => {
                         // if Not(Exists()) or Exits() need to modify the traversal to not collect
@@ -950,10 +1103,26 @@ pub(crate) fn validate_traversal<'a>(
                             }
                             _ => Where::Ref(WhereRef { expr }),
                         };
-
-                        gen_traversal
-                            .steps
-                            .push(Separator::Period(GeneratedStep::Where(where_expr)));
+                        let boexp = match &where_expr {
+                            Where::Ref(wr) => &wr.expr,
+                        };
+                        let folded = extract_indexed_where_predicate(boexp)
+                            .map(|predicate| {
+                                maybe_fold_indexed_where_into_source(
+                                    ctx,
+                                    &cur_ty,
+                                    gen_traversal,
+                                    predicate,
+                                )
+                            })
+                            .unwrap_or(false);
+                        if folded {
+                            // folded into the source step; no WHERE step emitted.
+                        } else {
+                            gen_traversal
+                                .steps
+                                .push(Separator::Period(GeneratedStep::Where(where_expr)));
+                        }
                     }
                     _ => unreachable!(),
                 }
@@ -2499,5 +2668,117 @@ mod tests {
         assert!(result.is_ok());
         let (diagnostics, _) = result.unwrap();
         assert!(diagnostics.is_empty());
+    }
+
+    // ============================================================================
+    // Indexed WHERE Folding Optimization Tests
+    // ============================================================================
+
+    #[test]
+    fn test_where_eq_on_indexed_field_folds_into_n_from_index() {
+        let source = r#"
+            N::File {
+                INDEX stable_id: String,
+                path: String
+            }
+
+            QUERY test(stable_id: String) =>
+                file <- N<File>::WHERE(_::{stable_id}::EQ(stable_id))
+                RETURN file
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, generated) = result.unwrap();
+        assert!(diagnostics.is_empty());
+
+        let out = generated.to_string();
+        assert!(out.contains("n_from_index(\"File\", \"stable_id\""));
+        // If the WHERE is folded, the generated traversal should not emit a filter for it.
+        assert!(!out.contains("filter_ref(|val"));
+    }
+
+    #[test]
+    fn test_where_is_in_on_indexed_field_folds_into_n_from_index_in() {
+        let source = r#"
+            N::Symbol {
+                INDEX stable_id: String
+            }
+
+            QUERY test(ids: [String]) =>
+                symbols <- N<Symbol>::WHERE(_::{stable_id}::IS_IN(ids))
+                RETURN symbols
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, generated) = result.unwrap();
+        assert!(diagnostics.is_empty());
+
+        let out = generated.to_string();
+        assert!(out.contains("n_from_index_in(\"Symbol\", \"stable_id\""));
+        assert!(!out.contains("filter_ref(|val"));
+    }
+
+    #[test]
+    fn test_where_on_non_indexed_field_does_not_fold() {
+        let source = r#"
+            N::File {
+                stable_id: String,
+                path: String
+            }
+
+            QUERY test(stable_id: String) =>
+                file <- N<File>::WHERE(_::{stable_id}::EQ(stable_id))
+                RETURN file
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, generated) = result.unwrap();
+        assert!(diagnostics.is_empty());
+
+        let out = generated.to_string();
+        assert!(!out.contains("n_from_index(\"File\", \"stable_id\""));
+        assert!(out.contains("filter_ref(|val"));
+    }
+
+    #[test]
+    fn test_only_first_where_folds() {
+        let source = r#"
+            N::File {
+                INDEX stable_id: String,
+                path: String
+            }
+
+            QUERY test(stable_id: String, path: String) =>
+                file <- N<File>
+                    ::WHERE(_::{stable_id}::EQ(stable_id))
+                    ::WHERE(_::{path}::EQ(path))
+                RETURN file
+        "#;
+
+        let content = write_to_temp_file(vec![source]);
+        let parsed = HelixParser::parse_source(&content).unwrap();
+        let result = crate::helixc::analyzer::analyze(&parsed);
+
+        assert!(result.is_ok());
+        let (diagnostics, generated) = result.unwrap();
+        assert!(diagnostics.is_empty());
+
+        let out = generated.to_string();
+        // First WHERE folds into the source.
+        assert!(out.contains("n_from_index(\"File\", \"stable_id\""));
+        // Second WHERE should remain as a filter step.
+        assert!(out.contains("filter_ref(|val"));
     }
 }
