@@ -28,7 +28,12 @@ use helix_db::{
         },
     },
 };
-use std::{env, fmt::Write, fs, path::{Path, PathBuf}};
+use std::{
+    env,
+    fmt::Write,
+    fs,
+    path::{Path, PathBuf},
+};
 
 // Development flag - set to true when working on V2 locally
 const DEV_MODE: bool = cfg!(debug_assertions);
@@ -58,9 +63,7 @@ fn resolve_helix_repo_source() -> Result<HelixRepoSource> {
         if !path.is_empty() {
             let source_root = PathBuf::from(path);
             if !source_root.exists() {
-                return Err(eyre::eyre!(
-                    "{ENV_HELIX_REPO_PATH}={path} does not exist"
-                ));
+                return Err(eyre::eyre!("{ENV_HELIX_REPO_PATH}={path} does not exist"));
             }
             return Ok(HelixRepoSource::Copy { source_root });
         }
@@ -303,10 +306,9 @@ async fn create_helix_cache(repo_cache: &Path, repo_source: &HelixRepoSource) ->
 
     match repo_source {
         HelixRepoSource::Copy { source_root } => create_copy_cache(repo_cache, source_root)?,
-        HelixRepoSource::Git {
-            url,
-            checkout_ref,
-        } => create_git_cache(repo_cache, url, checkout_ref.as_deref())?,
+        HelixRepoSource::Git { url, checkout_ref } => {
+            create_git_cache(repo_cache, url, checkout_ref.as_deref())?
+        }
     }
 
     print_success("Helix repository cached successfully");
@@ -328,7 +330,10 @@ async fn update_helix_cache(repo_cache: &Path, repo_source: &HelixRepoSource) ->
 }
 
 fn create_copy_cache(repo_cache: &Path, source_root: &Path) -> Result<()> {
-    print_status("CACHE", &format!("Copying Helix repo from {}", source_root.display()));
+    print_status(
+        "CACHE",
+        &format!("Copying Helix repo from {}", source_root.display()),
+    );
     copy_dir_recursive_excluding(source_root, repo_cache)
 }
 
@@ -631,9 +636,7 @@ fn handle_docker_rust_compilation_failure(
     println!(
         "If you are developing against a fork or unpublished changes, ensure the Helix repo cache matches your CLI/codegen:"
     );
-    println!(
-        "  - set {ENV_HELIX_REPO_PATH}=/path/to/helix-db (copy mode), or"
-    );
+    println!("  - set {ENV_HELIX_REPO_PATH}=/path/to/helix-db (copy mode), or");
     println!("  - set {ENV_HELIX_REPO_URL}=<git url> (git mode), or");
     println!("  - delete the cache at ~/.helix/repo and rebuild.");
     println!();
