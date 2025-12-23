@@ -137,10 +137,12 @@ impl HelixParser {
                                             ));
                                         }
                                     },
-                                    other => return Err(ParserError::from(format!(
-                                        "Unexpected rule in start_node by_index: {:?}",
-                                        other
-                                    ))),
+                                    other => {
+                                        return Err(ParserError::from(format!(
+                                            "Unexpected rule in start_node by_index: {:?}",
+                                            other
+                                        )));
+                                    }
                                 };
                                 vec![IdType::ByIndex {
                                     index: Box::new(index),
@@ -149,10 +151,12 @@ impl HelixParser {
                                 }]
                             })
                         }
-                        other => return Err(ParserError::from(format!(
-                            "Unexpected rule in start_node: {:?}",
-                            other
-                        ))),
+                        other => {
+                            return Err(ParserError::from(format!(
+                                "Unexpected rule in start_node: {:?}",
+                                other
+                            )));
+                        }
                     }
                 }
                 Ok(StartNode::Node { node_type, ids })
@@ -250,10 +254,12 @@ impl HelixParser {
                                             ));
                                         }
                                     },
-                                    other => return Err(ParserError::from(format!(
-                                        "Unexpected rule in start_edge by_index: {:?}",
-                                        other
-                                    ))),
+                                    other => {
+                                        return Err(ParserError::from(format!(
+                                            "Unexpected rule in start_edge by_index: {:?}",
+                                            other
+                                        )));
+                                    }
                                 };
                                 vec![IdType::ByIndex {
                                     index: Box::new(index),
@@ -262,10 +268,12 @@ impl HelixParser {
                                 }]
                             })
                         }
-                        other => return Err(ParserError::from(format!(
-                            "Unexpected rule in start_edge: {:?}",
-                            other
-                        ))),
+                        other => {
+                            return Err(ParserError::from(format!(
+                                "Unexpected rule in start_edge: {:?}",
+                                other
+                            )));
+                        }
                     }
                 }
                 Ok(StartNode::Edge { edge_type, ids })
@@ -372,10 +380,12 @@ impl HelixParser {
                             }
                             ids = Some(new_ids);
                         }
-                        other => return Err(ParserError::from(format!(
-                            "Unexpected rule in start_vector: {:?}",
-                            other
-                        ))),
+                        other => {
+                            return Err(ParserError::from(format!(
+                                "Unexpected rule in start_vector: {:?}",
+                                other
+                            )));
+                        }
                     }
                 }
                 Ok(StartNode::Vector { vector_type, ids })
@@ -389,8 +399,9 @@ impl HelixParser {
 mod tests {
     use super::*;
     use crate::helixc::parser::{
+        HelixParser,
         types::{ExpressionType, StatementType},
-        write_to_temp_file, HelixParser,
+        write_to_temp_file,
     };
     use crate::protocol::value::Value;
 
@@ -441,7 +452,10 @@ mod tests {
             panic!("expected by_index id");
         };
 
-        let IdType::Identifier { value: index_name, .. } = index.as_ref() else {
+        let IdType::Identifier {
+            value: index_name, ..
+        } = index.as_ref()
+        else {
             panic!("expected identifier index name");
         };
         assert_eq!(index_name, "since");

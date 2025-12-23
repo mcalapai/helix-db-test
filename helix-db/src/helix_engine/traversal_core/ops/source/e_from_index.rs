@@ -2,8 +2,8 @@ use crate::{
     helix_engine::{
         indexing::edge_secondary_index_not_found,
         traversal_core::{
-            traversal_iter::RoTraversalIterator, traversal_value::TraversalValue,
-            LMDB_STRING_HEADER_LENGTH,
+            LMDB_STRING_HEADER_LENGTH, traversal_iter::RoTraversalIterator,
+            traversal_value::TraversalValue,
         },
         types::GraphError,
     },

@@ -9,8 +9,8 @@ mod tests {
     use heed3::RoTxn;
     use helix_db::{
         helix_engine::{
-            bm25::bm25::{HBM25Config, BM25},
-            storage_core::{storage_methods::StorageMethods, HelixGraphStorage},
+            bm25::bm25::{BM25, HBM25Config},
+            storage_core::{HelixGraphStorage, storage_methods::StorageMethods},
             traversal_core::{
                 config::Config,
                 ops::{

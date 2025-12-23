@@ -157,11 +157,12 @@ fn maybe_fold_indexed_where_into_source(
             let index = GenRef::Literal(predicate.property.inner().to_string());
             match predicate.op {
                 IndexedWhereOp::Eq(key) => {
-                    gen_traversal.source_step = Separator::Period(SourceStep::NFromIndex(NFromIndex {
-                        label,
-                        index,
-                        key: ref_expr_for_index_key(&key),
-                    }));
+                    gen_traversal.source_step =
+                        Separator::Period(SourceStep::NFromIndex(NFromIndex {
+                            label,
+                            index,
+                            key: ref_expr_for_index_key(&key),
+                        }));
                     true
                 }
                 IndexedWhereOp::IsIn(keys) => {
@@ -300,79 +301,52 @@ pub(crate) fn validate_traversal<'a>(
                 assert!(ids.len() == 1, "multiple ids not supported yet");
                 // check id exists in scope
                 match ids.first().cloned() {
-                    Some(id) => {
-                        match id {
-                            IdType::ByIndex { index, value, loc } => {
-                                let index_name = match *index {
-                                    IdType::Identifier { value, loc: _ } => value,
-                                    IdType::Literal { mut value, loc: _ } => {
-                                        value.retain(|c| c != '"');
-                                        value
-                                    }
-                                    _ => unreachable!(),
-                                };
-                                is_valid_identifier(
-                                    ctx,
-                                    original_query,
-                                    loc.clone(),
-                                    index_name.as_str(),
-                                );
-                                let corresponding_field = ctx
-                                    .node_fields
-                                    .get(node_type.as_str())
-                                    .cloned()
-                                    .ok_or_else(|| {
-                                        generate_error!(
-                                            ctx,
-                                            original_query,
-                                            loc.clone(),
-                                            E201,
-                                            node_type
-                                        );
-                                    })
-                                    .unwrap_or_else(|_| {
-                                        generate_error!(
-                                            ctx,
-                                            original_query,
-                                            loc.clone(),
-                                            E201,
-                                            node_type
-                                        );
-                                        HashMap::default()
-                                    });
+                    Some(id) => match id {
+                        IdType::ByIndex { index, value, loc } => {
+                            let index_name = match *index {
+                                IdType::Identifier { value, loc: _ } => value,
+                                IdType::Literal { mut value, loc: _ } => {
+                                    value.retain(|c| c != '"');
+                                    value
+                                }
+                                _ => unreachable!(),
+                            };
+                            is_valid_identifier(
+                                ctx,
+                                original_query,
+                                loc.clone(),
+                                index_name.as_str(),
+                            );
+                            let corresponding_field = ctx
+                                .node_fields
+                                .get(node_type.as_str())
+                                .cloned()
+                                .ok_or_else(|| {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        loc.clone(),
+                                        E201,
+                                        node_type
+                                    );
+                                })
+                                .unwrap_or_else(|_| {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        loc.clone(),
+                                        E201,
+                                        node_type
+                                    );
+                                    HashMap::default()
+                                });
 
-                                match corresponding_field
-                                    .iter()
-                                    .find(|(name, _)| name.to_string() == index_name)
-                                {
-                                    Some((_, field)) => {
-                                        if !field.is_indexed() {
-                                            generate_error!(
-                                                ctx,
-                                                original_query,
-                                                loc.clone(),
-                                                E208,
-                                                [&index_name, node_type],
-                                                [node_type]
-                                            );
-                                        } else if let ValueType::Literal { ref value, ref loc } =
-                                            *value
-                                            && !field.field_type.eq(value)
-                                        {
-                                            generate_error!(
-                                                ctx,
-                                                original_query,
-                                                loc.clone(),
-                                                E205,
-                                                &value.inner_stringify(),
-                                                &value.to_variant_string(),
-                                                &field.field_type.to_string(),
-                                                "node",
-                                                node_type
-                                            );
-                                        }
-                                    }
-                                    None => {
+                            match corresponding_field
+                                .iter()
+                                .find(|(name, _)| name.to_string() == index_name)
+                            {
+                                Some((_, field)) => {
+                                    if !field.is_indexed() {
                                         generate_error!(
                                             ctx,
                                             original_query,
@@ -381,102 +355,124 @@ pub(crate) fn validate_traversal<'a>(
                                             [&index_name, node_type],
                                             [node_type]
                                         );
+                                    } else if let ValueType::Literal { ref value, ref loc } = *value
+                                        && !field.field_type.eq(value)
+                                    {
+                                        generate_error!(
+                                            ctx,
+                                            original_query,
+                                            loc.clone(),
+                                            E205,
+                                            &value.inner_stringify(),
+                                            &value.to_variant_string(),
+                                            &field.field_type.to_string(),
+                                            "node",
+                                            node_type
+                                        );
                                     }
-                                };
-                                gen_traversal.source_step =
-                                    Separator::Period(SourceStep::NFromIndex(NFromIndex {
-                                        label: GenRef::Literal(node_type.clone()),
-                                        index: GenRef::Literal(index_name),
-                                        key: match *value {
-                                            ValueType::Identifier { value, loc } => {
-                                                if is_valid_identifier(
+                                }
+                                None => {
+                                    generate_error!(
+                                        ctx,
+                                        original_query,
+                                        loc.clone(),
+                                        E208,
+                                        [&index_name, node_type],
+                                        [node_type]
+                                    );
+                                }
+                            };
+                            gen_traversal.source_step =
+                                Separator::Period(SourceStep::NFromIndex(NFromIndex {
+                                    label: GenRef::Literal(node_type.clone()),
+                                    index: GenRef::Literal(index_name),
+                                    key: match *value {
+                                        ValueType::Identifier { value, loc } => {
+                                            if is_valid_identifier(
+                                                ctx,
+                                                original_query,
+                                                loc.clone(),
+                                                value.as_str(),
+                                            ) && !scope.contains_key(value.as_str())
+                                            {
+                                                generate_error!(
                                                     ctx,
                                                     original_query,
                                                     loc.clone(),
-                                                    value.as_str(),
-                                                ) && !scope.contains_key(value.as_str())
-                                                {
-                                                    generate_error!(
-                                                        ctx,
-                                                        original_query,
-                                                        loc.clone(),
-                                                        E301,
-                                                        value.as_str()
-                                                    );
-                                                }
-                                                gen_identifier_or_param(
-                                                    original_query,
-                                                    value.as_str(),
-                                                    true,
-                                                    false,
-                                                )
+                                                    E301,
+                                                    value.as_str()
+                                                );
                                             }
-                                            ValueType::Literal { value, loc: _ } => {
-                                                GeneratedValue::Primitive(GenRef::Ref(
-                                                    match value {
-                                                        Value::String(s) => format!("\"{s}\""),
-                                                        other => other.inner_stringify(),
-                                                    },
-                                                ))
-                                            }
-                                            _ => unreachable!(),
-                                        },
-                                    }));
-                                gen_traversal.should_collect = ShouldCollect::ToObj;
-                                gen_traversal.traversal_type = TraversalType::Ref;
-                                Type::Node(Some(node_type.to_string()))
-                            }
-                            IdType::Identifier { value: i, loc } => {
-                                gen_traversal.source_step =
-                                    Separator::Period(SourceStep::NFromID(NFromID {
-                                        id: {
-                                            is_valid_identifier(
-                                                ctx,
+                                            gen_identifier_or_param(
                                                 original_query,
-                                                loc.clone(),
-                                                i.as_str(),
-                                            );
-                                            let _ = type_in_scope(
-                                                ctx,
-                                                original_query,
-                                                loc.clone(),
-                                                scope,
-                                                i.as_str(),
-                                            );
-                                            let value = gen_identifier_or_param(
-                                                original_query,
-                                                i.as_str(),
+                                                value.as_str(),
                                                 true,
                                                 false,
-                                            );
-                                            check_identifier_is_fieldtype(
-                                                ctx,
-                                                original_query,
-                                                loc.clone(),
-                                                scope,
-                                                i.as_str(),
-                                                FieldType::Uuid,
-                                            )?;
-                                            value.inner().clone()
-                                        },
-                                        label: GenRef::Literal(node_type.clone()),
-                                    }));
-                                gen_traversal.traversal_type = TraversalType::Ref;
-                                gen_traversal.should_collect = ShouldCollect::ToObj;
-                                Type::Node(Some(node_type.to_string()))
-                            }
-                            IdType::Literal { value: s, loc: _ } => {
-                                gen_traversal.source_step =
-                                    Separator::Period(SourceStep::NFromID(NFromID {
-                                        id: GenRef::Ref(s.clone()),
-                                        label: GenRef::Literal(node_type.clone()),
-                                    }));
-                                gen_traversal.traversal_type = TraversalType::Ref;
-                                gen_traversal.should_collect = ShouldCollect::ToObj;
-                                Type::Node(Some(node_type.to_string()))
-                            }
+                                            )
+                                        }
+                                        ValueType::Literal { value, loc: _ } => {
+                                            GeneratedValue::Primitive(GenRef::Ref(match value {
+                                                Value::String(s) => format!("\"{s}\""),
+                                                other => other.inner_stringify(),
+                                            }))
+                                        }
+                                        _ => unreachable!(),
+                                    },
+                                }));
+                            gen_traversal.should_collect = ShouldCollect::ToObj;
+                            gen_traversal.traversal_type = TraversalType::Ref;
+                            Type::Node(Some(node_type.to_string()))
                         }
-                    }
+                        IdType::Identifier { value: i, loc } => {
+                            gen_traversal.source_step =
+                                Separator::Period(SourceStep::NFromID(NFromID {
+                                    id: {
+                                        is_valid_identifier(
+                                            ctx,
+                                            original_query,
+                                            loc.clone(),
+                                            i.as_str(),
+                                        );
+                                        let _ = type_in_scope(
+                                            ctx,
+                                            original_query,
+                                            loc.clone(),
+                                            scope,
+                                            i.as_str(),
+                                        );
+                                        let value = gen_identifier_or_param(
+                                            original_query,
+                                            i.as_str(),
+                                            true,
+                                            false,
+                                        );
+                                        check_identifier_is_fieldtype(
+                                            ctx,
+                                            original_query,
+                                            loc.clone(),
+                                            scope,
+                                            i.as_str(),
+                                            FieldType::Uuid,
+                                        )?;
+                                        value.inner().clone()
+                                    },
+                                    label: GenRef::Literal(node_type.clone()),
+                                }));
+                            gen_traversal.traversal_type = TraversalType::Ref;
+                            gen_traversal.should_collect = ShouldCollect::ToObj;
+                            Type::Node(Some(node_type.to_string()))
+                        }
+                        IdType::Literal { value: s, loc: _ } => {
+                            gen_traversal.source_step =
+                                Separator::Period(SourceStep::NFromID(NFromID {
+                                    id: GenRef::Ref(s.clone()),
+                                    label: GenRef::Literal(node_type.clone()),
+                                }));
+                            gen_traversal.traversal_type = TraversalType::Ref;
+                            gen_traversal.should_collect = ShouldCollect::ToObj;
+                            Type::Node(Some(node_type.to_string()))
+                        }
+                    },
                     None => {
                         generate_error!(ctx, original_query, tr.loc.clone(), E601, "missing id");
                         Type::Unknown
@@ -551,8 +547,7 @@ pub(crate) fn validate_traversal<'a>(
                                             [&index_name, edge_type],
                                             [edge_type]
                                         );
-                                    } else if let ValueType::Literal { ref value, ref loc } =
-                                        *value
+                                    } else if let ValueType::Literal { ref value, ref loc } = *value
                                         && !field.field_type.eq(value)
                                     {
                                         generate_error!(
@@ -664,13 +659,7 @@ pub(crate) fn validate_traversal<'a>(
                         }
                     },
                     None => {
-                        generate_error!(
-                            ctx,
-                            original_query,
-                            tr.loc.clone(),
-                            E601,
-                            "missing id"
-                        );
+                        generate_error!(ctx, original_query, tr.loc.clone(), E601, "missing id");
                         Type::Unknown
                     }
                 }
@@ -1450,7 +1439,13 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
-                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
+                                type_in_scope(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    scope,
+                                    i.as_str(),
+                                );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1475,7 +1470,13 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
-                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
+                                type_in_scope(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    scope,
+                                    i.as_str(),
+                                );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1500,7 +1501,13 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
-                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
+                                type_in_scope(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    scope,
+                                    i.as_str(),
+                                );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1525,7 +1532,13 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
-                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
+                                type_in_scope(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    scope,
+                                    i.as_str(),
+                                );
                                 gen_identifier_or_param(original_query, i.as_str(), false, true)
                             }
                             _ => unreachable!("Cannot reach here"),
@@ -1562,32 +1575,38 @@ pub(crate) fn validate_traversal<'a>(
                             }
                         } else {
                             let v = match &expr.expr {
-                            ExpressionType::BooleanLiteral(b) => {
-                                GeneratedValue::Primitive(GenRef::Std(b.to_string()))
-                            }
-                            ExpressionType::IntegerLiteral(i) => {
-                                GeneratedValue::Primitive(GenRef::Std(i.to_string()))
-                            }
-                            ExpressionType::FloatLiteral(f) => {
-                                GeneratedValue::Primitive(GenRef::Std(f.to_string()))
-                            }
-                            ExpressionType::StringLiteral(s) => {
-                                GeneratedValue::Primitive(GenRef::Literal(s.to_string()))
-                            }
-                            ExpressionType::Identifier(i) => {
-                                is_valid_identifier(
-                                    ctx,
-                                    original_query,
-                                    expr.loc.clone(),
-                                    i.as_str(),
-                                );
-                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
-                                gen_identifier_or_param(original_query, i.as_str(), false, true)
-                            }
-                            _ => {
-                                unreachable!("Cannot reach here");
-                            }
-                        };
+                                ExpressionType::BooleanLiteral(b) => {
+                                    GeneratedValue::Primitive(GenRef::Std(b.to_string()))
+                                }
+                                ExpressionType::IntegerLiteral(i) => {
+                                    GeneratedValue::Primitive(GenRef::Std(i.to_string()))
+                                }
+                                ExpressionType::FloatLiteral(f) => {
+                                    GeneratedValue::Primitive(GenRef::Std(f.to_string()))
+                                }
+                                ExpressionType::StringLiteral(s) => {
+                                    GeneratedValue::Primitive(GenRef::Literal(s.to_string()))
+                                }
+                                ExpressionType::Identifier(i) => {
+                                    is_valid_identifier(
+                                        ctx,
+                                        original_query,
+                                        expr.loc.clone(),
+                                        i.as_str(),
+                                    );
+                                    type_in_scope(
+                                        ctx,
+                                        original_query,
+                                        expr.loc.clone(),
+                                        scope,
+                                        i.as_str(),
+                                    );
+                                    gen_identifier_or_param(original_query, i.as_str(), false, true)
+                                }
+                                _ => {
+                                    unreachable!("Cannot reach here");
+                                }
+                            };
                             BoolOp::Eq(Eq {
                                 left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
                                 right: v,
@@ -1621,30 +1640,36 @@ pub(crate) fn validate_traversal<'a>(
                             }
                         } else {
                             let v = match &expr.expr {
-                            ExpressionType::BooleanLiteral(b) => {
-                                GeneratedValue::Primitive(GenRef::Std(b.to_string()))
-                            }
-                            ExpressionType::IntegerLiteral(i) => {
-                                GeneratedValue::Primitive(GenRef::Std(i.to_string()))
-                            }
-                            ExpressionType::FloatLiteral(f) => {
-                                GeneratedValue::Primitive(GenRef::Std(f.to_string()))
-                            }
-                            ExpressionType::StringLiteral(s) => {
-                                GeneratedValue::Primitive(GenRef::Literal(s.to_string()))
-                            }
-                            ExpressionType::Identifier(i) => {
-                                is_valid_identifier(
-                                    ctx,
-                                    original_query,
-                                    expr.loc.clone(),
-                                    i.as_str(),
-                                );
-                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
-                                gen_identifier_or_param(original_query, i.as_str(), false, true)
-                            }
-                            _ => unreachable!("Cannot reach here"),
-                        };
+                                ExpressionType::BooleanLiteral(b) => {
+                                    GeneratedValue::Primitive(GenRef::Std(b.to_string()))
+                                }
+                                ExpressionType::IntegerLiteral(i) => {
+                                    GeneratedValue::Primitive(GenRef::Std(i.to_string()))
+                                }
+                                ExpressionType::FloatLiteral(f) => {
+                                    GeneratedValue::Primitive(GenRef::Std(f.to_string()))
+                                }
+                                ExpressionType::StringLiteral(s) => {
+                                    GeneratedValue::Primitive(GenRef::Literal(s.to_string()))
+                                }
+                                ExpressionType::Identifier(i) => {
+                                    is_valid_identifier(
+                                        ctx,
+                                        original_query,
+                                        expr.loc.clone(),
+                                        i.as_str(),
+                                    );
+                                    type_in_scope(
+                                        ctx,
+                                        original_query,
+                                        expr.loc.clone(),
+                                        scope,
+                                        i.as_str(),
+                                    );
+                                    gen_identifier_or_param(original_query, i.as_str(), false, true)
+                                }
+                                _ => unreachable!("Cannot reach here"),
+                            };
                             BoolOp::Neq(Neq {
                                 left: GeneratedValue::Primitive(GenRef::Std("*v".to_string())),
                                 right: v,
@@ -1660,7 +1685,13 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
-                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
+                                type_in_scope(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    scope,
+                                    i.as_str(),
+                                );
                                 gen_identifier_or_param(original_query, i.as_str(), true, false)
                             }
                             ExpressionType::BooleanLiteral(b) => {
@@ -1688,7 +1719,13 @@ pub(crate) fn validate_traversal<'a>(
                                     expr.loc.clone(),
                                     i.as_str(),
                                 );
-                                type_in_scope(ctx, original_query, expr.loc.clone(), scope, i.as_str());
+                                type_in_scope(
+                                    ctx,
+                                    original_query,
+                                    expr.loc.clone(),
+                                    scope,
+                                    i.as_str(),
+                                );
                                 gen_identifier_or_param(original_query, i.as_str(), true, false)
                             }
                             ExpressionType::ArrayLiteral(a) => GeneratedValue::Array(GenRef::Std(
@@ -1833,7 +1870,13 @@ pub(crate) fn validate_traversal<'a>(
                                             field.value.loc.clone(),
                                             i.as_str(),
                                         );
-                                        type_in_scope(ctx, original_query, field.value.loc.clone(), scope, i.as_str());
+                                        type_in_scope(
+                                            ctx,
+                                            original_query,
+                                            field.value.loc.clone(),
+                                            scope,
+                                            i.as_str(),
+                                        );
                                         gen_identifier_or_param(
                                             original_query,
                                             i.as_str(),
@@ -1857,7 +1900,13 @@ pub(crate) fn validate_traversal<'a>(
                                                 e.loc.clone(),
                                                 i.as_str(),
                                             );
-                                            type_in_scope(ctx, original_query, e.loc.clone(), scope, i.as_str());
+                                            type_in_scope(
+                                                ctx,
+                                                original_query,
+                                                e.loc.clone(),
+                                                scope,
+                                                i.as_str(),
+                                            );
                                             gen_identifier_or_param(
                                                 original_query,
                                                 i.as_str(),
@@ -1879,12 +1928,24 @@ pub(crate) fn validate_traversal<'a>(
                                             GeneratedValue::Primitive(GenRef::Std(i.to_string()))
                                         }
                                         other => {
-                                            generate_error!(ctx, original_query, e.loc.clone(), E206, &format!("{:?}", other));
+                                            generate_error!(
+                                                ctx,
+                                                original_query,
+                                                e.loc.clone(),
+                                                E206,
+                                                &format!("{:?}", other)
+                                            );
                                             GeneratedValue::Unknown
                                         }
                                     },
                                     other => {
-                                        generate_error!(ctx, original_query, field.value.loc.clone(), E206, &format!("{:?}", other));
+                                        generate_error!(
+                                            ctx,
+                                            original_query,
+                                            field.value.loc.clone(),
+                                            E206,
+                                            &format!("{:?}", other)
+                                        );
                                         GeneratedValue::Unknown
                                     }
                                 },
@@ -2238,7 +2299,13 @@ pub(crate) fn validate_traversal<'a>(
                 // Generate distance parameter if provided
                 let distance = if let Some(MMRDistance::Identifier(id)) = &rerank_mmr.distance {
                     is_valid_identifier(ctx, original_query, rerank_mmr.loc.clone(), id.as_str());
-                    type_in_scope(ctx, original_query, rerank_mmr.loc.clone(), scope, id.as_str());
+                    type_in_scope(
+                        ctx,
+                        original_query,
+                        rerank_mmr.loc.clone(),
+                        scope,
+                        id.as_str(),
+                    );
                     Some(
                         crate::helixc::generator::traversal_steps::MMRDistanceMethod::Identifier(
                             id.clone(),

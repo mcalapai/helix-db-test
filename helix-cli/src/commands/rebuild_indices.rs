@@ -1,11 +1,13 @@
 use crate::docker::DockerManager;
 use crate::project::ProjectContext;
 use crate::prompts;
-use crate::utils::helixc_utils::{analyze_source, collect_hx_files, generate_content, parse_content};
+use crate::utils::helixc_utils::{
+    analyze_source, collect_hx_files, generate_content, parse_content,
+};
 use crate::utils::{print_confirm, print_status, print_success, print_warning};
 use eyre::Result;
-use helix_db::helix_engine::storage_core::version_info::VersionInfo;
 use helix_db::helix_engine::storage_core::HelixGraphStorage;
+use helix_db::helix_engine::storage_core::version_info::VersionInfo;
 use helix_db::helix_engine::traversal_core::config::Config;
 
 pub async fn run(instance: Option<String>) -> Result<()> {
@@ -36,14 +38,16 @@ pub async fn run(instance: Option<String>) -> Result<()> {
             instance_running = status.status.starts_with("Up");
         }
     } else {
-        print_warning("Unable to determine if the instance is running. Ensure it is stopped before rebuild.");
+        print_warning(
+            "Unable to determine if the instance is running. Ensure it is stopped before rebuild.",
+        );
     }
 
     if instance_running {
-        print_warning("Instance appears to be running. Rebuild requires the instance to be stopped.");
-        let confirmed = print_confirm(&format!(
-            "Stop instance '{instance_name}' now?"
-        ))?;
+        print_warning(
+            "Instance appears to be running. Rebuild requires the instance to be stopped.",
+        );
+        let confirmed = print_confirm(&format!("Stop instance '{instance_name}' now?"))?;
         if !confirmed {
             print_status("REBUILD", "Cancelled by user");
             return Ok(());

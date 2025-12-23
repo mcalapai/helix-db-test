@@ -47,8 +47,6 @@ impl Debug for IoContFn {
     }
 }
 
-
-
 // basic type for function pointer
 pub type BasicHandlerFn = fn(HandlerInput) -> Result<Response, GraphError>;
 
@@ -67,7 +65,11 @@ pub struct Handler {
 
 impl Handler {
     pub const fn new(name: &'static str, func: BasicHandlerFn, is_write: bool) -> Self {
-        Self { name, func, is_write }
+        Self {
+            name,
+            func,
+            is_write,
+        }
     }
 }
 

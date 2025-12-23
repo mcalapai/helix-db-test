@@ -5,14 +5,16 @@ pub mod storage_migration;
 pub mod version_info;
 
 #[cfg(test)]
-mod storage_migration_tests;
-#[cfg(test)]
 mod storage_concurrent_tests;
+#[cfg(test)]
+mod storage_migration_tests;
 
 use crate::{
     helix_engine::{
         bm25::bm25::HBM25Config,
-        indexing::{edge_secondary_index_db_name, edge_secondary_index_not_found, secondary_index_not_found},
+        indexing::{
+            edge_secondary_index_db_name, edge_secondary_index_not_found, secondary_index_not_found,
+        },
         storage_core::{
             storage_methods::{DBMethods, StorageMethods},
             version_info::VersionInfo,

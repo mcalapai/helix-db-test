@@ -28,8 +28,7 @@ fn setup_indexed_db() -> (TempDir, Arc<HelixGraphStorage>) {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().to_str().unwrap();
     let mut config = crate::helix_engine::traversal_core::config::Config::default();
-    config.graph_config.as_mut().unwrap().edge_secondary_indices =
-        Some(vec!["since".to_string()]);
+    config.graph_config.as_mut().unwrap().edge_secondary_indices = Some(vec!["since".to_string()]);
     let storage = HelixGraphStorage::new(db_path, config, Default::default()).unwrap();
     (temp_dir, Arc::new(storage))
 }
